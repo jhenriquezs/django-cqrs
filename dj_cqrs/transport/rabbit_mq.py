@@ -18,7 +18,14 @@ from dj_cqrs.utils import get_delay_queue_max_size, get_messages_prefetch_count_
 from django.conf import settings
 from django.utils import timezone
 
-from pika import BasicProperties, BlockingConnection, ConnectionParameters, credentials, exceptions
+from pika import (
+    BasicProperties,
+    BlockingConnection,
+    ConnectionParameters,
+    credentials,
+    exceptions,
+    URLParameters,
+)
 
 import ujson
 
@@ -243,6 +250,8 @@ class RabbitMQTransport(LoggingMixin, BaseTransport):
         host,
         port,
         creds,
+        vhost,
+        ssl_options,
         exchange,
         queue_name,
         dead_letter_queue_name,
@@ -250,7 +259,13 @@ class RabbitMQTransport(LoggingMixin, BaseTransport):
         cqrs_ids=None,
     ):
         connection = BlockingConnection(
-            ConnectionParameters(host=host, port=port, credentials=creds),
+            ConnectionParameters(
+                host=host,
+                port=port,
+                credentials=creds,
+                virtual_host=vhost,
+                ssl_options=ssl_options,
+            ),
         )
         channel = connection.channel()
         channel.basic_qos(prefetch_count=prefetch_count)
@@ -289,30 +304,48 @@ class RabbitMQTransport(LoggingMixin, BaseTransport):
         return connection, channel, consumer_generator
 
     @classmethod
-    def _get_producer_rmq_objects(cls, host, port, creds, exchange, signal_type=None):
+    def _get_producer_rmq_objects(
+        cls,
+        host,
+        port,
+        creds,
+        vhost,
+        ssl_options,
+        exchange,
+        signal_type=None,
+    ):
         """
         Use shared connection in case of sync mode, otherwise create new connection for each
         message
         """
         if signal_type == SignalType.SYNC:
             if cls._producer_connection is None:
-                connection, channel = cls._create_connection(host, port, creds, exchange)
+                connection, channel = cls._create_connection(
+                    host,
+                    port,
+                    creds,
+                    exchange,
+                    vhost,
+                    ssl_options,
+                )
 
                 cls._producer_connection = connection
                 cls._producer_channel = channel
 
             return cls._producer_connection, cls._producer_channel
         else:
-            return cls._create_connection(host, port, creds, exchange)
+            return cls._create_connection(host, port, creds, exchange, vhost, ssl_options)
 
     @classmethod
-    def _create_connection(cls, host, port, creds, exchange):
+    def _create_connection(cls, host, port, creds, exchange, vhost, ssl_options):
         connection = BlockingConnection(
             ConnectionParameters(
                 host=host,
                 port=port,
+                virtual_host=vhost,
                 credentials=creds,
                 blocked_connection_timeout=10,
+                ssl_options=ssl_options
             ),
         )
         channel = connection.channel()
@@ -331,33 +364,36 @@ class RabbitMQTransport(LoggingMixin, BaseTransport):
 
     @staticmethod
     def _parse_url(url):
-        scheme = urlparse(url).scheme
-        assert scheme == 'amqp', 'Scheme must be "amqp" for RabbitMQTransport.'
 
-        schemeless = url[len(scheme) + 3:]
-        parts = urlparse('http://' + schemeless)
+        parts = URLParameters(url)
 
         return (
-            unquote(parts.hostname or '') or ConnectionParameters.DEFAULT_HOST,
+            unquote(parts.host or '') or ConnectionParameters.DEFAULT_HOST,
             parts.port or ConnectionParameters.DEFAULT_PORT,
-            unquote(parts.username or '') or ConnectionParameters.DEFAULT_USERNAME,
-            unquote(parts.password or '') or ConnectionParameters.DEFAULT_PASSWORD,
+            unquote(parts.credentials.username or '') or ConnectionParameters.DEFAULT_USERNAME,
+            unquote(parts.credentials.password or '') or ConnectionParameters.DEFAULT_PASSWORD,
+            unquote(parts.virtual_host or '') or ConnectionParameters.DEFAULT_VIRTUAL_HOST,
+            parts.ssl_options or ConnectionParameters.DEFAULT_SSL_OPTIONS,
         )
 
     @classmethod
     def _get_common_settings(cls):
         if 'url' in settings.CQRS:
-            host, port, user, password = cls._parse_url(settings.CQRS.get('url'))
+            host, port, user, password, vhost, ssl_opt = cls._parse_url(settings.CQRS.get('url'))
         else:
             host = settings.CQRS.get('host', ConnectionParameters.DEFAULT_HOST)
             port = settings.CQRS.get('port', ConnectionParameters.DEFAULT_PORT)
             user = settings.CQRS.get('user', ConnectionParameters.DEFAULT_USERNAME)
             password = settings.CQRS.get('password', ConnectionParameters.DEFAULT_PASSWORD)
+            vhost = settings.CQRS.get('virtual_host', ConnectionParameters.DEFAULT_VIRTUAL_HOST)
+            ssl_opt = settings.CQRS.get('ssl_options', ConnectionParameters.DEFAULT_SSL_OPTIONS)
         exchange = settings.CQRS.get('exchange', 'cqrs')
         return (
             host,
             port,
             credentials.PlainCredentials(user, password, erase_on_connect=True),
+            vhost,
+            ssl_opt,
             exchange,
         )
 

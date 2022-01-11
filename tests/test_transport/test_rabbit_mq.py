@@ -1,6 +1,7 @@
 #  Copyright © 2021 Ingram Micro Inc. All rights reserved.
 
 import logging
+import ssl
 from datetime import datetime, timedelta, timezone
 from importlib import import_module, reload
 
@@ -18,6 +19,7 @@ from dj_cqrs.transport.rabbit_mq import RabbitMQTransport
 
 from django.db import DatabaseError
 
+from pika import SSLOptions
 from pika.exceptions import AMQPError
 
 import pytest
@@ -66,7 +68,9 @@ def test_default_settings():
     assert s[0] == 'localhost'
     assert s[1] == 5672
     assert s[2].username == 'guest' and s[2].password == 'guest'
-    assert s[3] == 'cqrs'
+    assert s[3] == '/'
+    assert s[4] is None
+    assert s[5] == 'cqrs'
 
 
 def test_non_default_settings(settings, caplog):
@@ -77,13 +81,17 @@ def test_non_default_settings(settings, caplog):
         'user': 'usr',
         'password': 'pswd',
         'exchange': 'exchange',
+        'virtual_host': 'test',
+        'ssl_options': SSLOptions(ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)),
     }
 
     s = PublicRabbitMQTransport.get_common_settings()
     assert s[0] == 'rabbit'
     assert s[1] == 8000
     assert s[2].username == 'usr' and s[2].password == 'pswd'
-    assert s[3] == 'exchange'
+    assert s[3] == 'test'
+    assert type(s[4]) is SSLOptions
+    assert s[5] == 'exchange'
 
 
 def test_default_url_settings(settings):
@@ -95,20 +103,24 @@ def test_default_url_settings(settings):
     assert s[0] == 'localhost'
     assert s[1] == 5672
     assert s[2].username == 'guest' and s[2].password == 'guest'
-    assert s[3] == 'cqrs'
+    assert s[3] == '/'
+    assert s[4] is None
+    assert s[5] == 'cqrs'
 
 
 def test_non_default_url_settings(settings):
     settings.CQRS = {
         'transport': 'dj_cqrs.transport.rabbit_mq.RabbitMQTransport',
-        'url': 'amqp://usr:pswd@rabbit:8000',
+        'url': 'amqps://usr:pswd@rabbit:8000/testhost',
         'exchange': 'exchange',
     }
     s = PublicRabbitMQTransport.get_common_settings()
     assert s[0] == 'rabbit'
     assert s[1] == 8000
     assert s[2].username == 'usr' and s[2].password == 'pswd'
-    assert s[3] == 'exchange'
+    assert s[3] == 'testhost'
+    assert type(s[4]) == SSLOptions
+    assert s[5] == 'exchange'
 
 
 def test_invalid_url_settings(settings):
@@ -116,10 +128,10 @@ def test_invalid_url_settings(settings):
         'transport': 'dj_cqrs.transport.rabbit_mq.RabbitMQTransport',
         'url': 'rabbit://localhost',
     }
-    with pytest.raises(AssertionError) as ei:
+    with pytest.raises(ValueError) as ei:
         PublicRabbitMQTransport.get_common_settings()
 
-    assert ei.match('Scheme must be "amqp" for RabbitMQTransport.')
+    assert ei.match("Unexpected URL scheme 'rabbit'; supported scheme values: amqp, amqps" )
 
 
 def test_consumer_default_settings(settings):
