@@ -249,9 +249,9 @@ class RabbitMQTransport(LoggingMixin, BaseTransport):
         cls,
         host,
         port,
+        creds,
         vhost,
         ssl_options,
-        creds,
         exchange,
         queue_name,
         dead_letter_queue_name,
@@ -308,9 +308,9 @@ class RabbitMQTransport(LoggingMixin, BaseTransport):
         cls,
         host,
         port,
+        creds,
         vhost,
         ssl_options,
-        creds,
         exchange,
         signal_type=None,
     ):
@@ -323,10 +323,10 @@ class RabbitMQTransport(LoggingMixin, BaseTransport):
                 connection, channel = cls._create_connection(
                     host,
                     port,
-                    vhost,
-                    ssl_options,
                     creds,
                     exchange,
+                    vhost,
+                    ssl_options,
                 )
 
                 cls._producer_connection = connection
@@ -334,10 +334,10 @@ class RabbitMQTransport(LoggingMixin, BaseTransport):
 
             return cls._producer_connection, cls._producer_channel
         else:
-            return cls._create_connection(host, port, vhost, ssl_options, creds, exchange)
+            return cls._create_connection(host, port, creds, exchange, vhost, ssl_options)
 
     @classmethod
-    def _create_connection(cls, host, port, vhost, ssl_options, creds, exchange):
+    def _create_connection(cls, host, port, creds, exchange, vhost, ssl_options):
         connection = BlockingConnection(
             ConnectionParameters(
                 host=host,
@@ -373,7 +373,7 @@ class RabbitMQTransport(LoggingMixin, BaseTransport):
             unquote(parts.credentials.username or '') or ConnectionParameters.DEFAULT_USERNAME,
             unquote(parts.credentials.password or '') or ConnectionParameters.DEFAULT_PASSWORD,
             unquote(parts.virtual_host or '') or ConnectionParameters.DEFAULT_VIRTUAL_HOST,
-            parts.ssl_options or ConnectionParameters.DEFAULT_SSL_OPTIONS
+            parts.ssl_options or ConnectionParameters.DEFAULT_SSL_OPTIONS,
         )
 
     @classmethod
@@ -391,9 +391,9 @@ class RabbitMQTransport(LoggingMixin, BaseTransport):
         return (
             host,
             port,
+            credentials.PlainCredentials(user, password, erase_on_connect=True),
             vhost,
             ssl_opt,
-            credentials.PlainCredentials(user, password, erase_on_connect=True),
             exchange,
         )
 
